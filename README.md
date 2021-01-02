@@ -23,8 +23,9 @@ times over the same input data. The first time its runs, one or more dilog outpu
 will be written into the working directory. Every time after that, instead of writing new dilog output files,
 it will read the messages from the exiting dilog files and compare with the message stream from the running
 program. As soon as any divergence is found, a runtime exception is generated with a message indicating the
-point where the divengence first appears. One can further instrument the application code with an exception
-handler and print out more information from the runtime context at the point of divergence.
+point where the divengence first appears. It is left to the user to further instrument the application code
+with an exception handler in case more information is desired regarding the runtime context at the point
+of divergence.
 
 ## Usage
 The only thing you need to do is to include the dilog::printf statements at the relevant places in your
