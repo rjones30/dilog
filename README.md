@@ -59,11 +59,11 @@ Here is an example of a loop over a std::map with a pointer for its key, illustr
     std::map<*farm, std::vector<sheep> > herds;
     ...
     for (auto herd : herds) {
-        dilog.get("sheepcounter")::block_begin("loop over farms in herds");
+        dilog::get("sheepcounter").block_begin("loop over farms in herds");
         ...
         for (int isheep=0; isheep < herd.second.size(); ++isheep) {
            ...
-           dilog.get("sheepcounter")::printf("looking at sheep %d in herd %s\n", isheep, herd.first->name);
+           dilog::get("sheepcounter").printf("looking at sheep %d in herd %s\n", isheep, herd.first->name);
            ...
         }
         dilog::get("sheepcounter").block_end("loop over farms in herds");
