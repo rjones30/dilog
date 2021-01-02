@@ -32,10 +32,10 @@ The only thing you need to do is to include the dilog::printf statements at the 
 code. No object allocation is needed at program/thread startup, nor is any explicit cleanup required at
 exit.
 
-    `#include <dilog.h> 
+    #include <dilog.h> 
     ...
     dilog::get("sheepcounter").printf("looking at sheep %d in herd %s\n", isheep, herd);
-    ...`
+    ...
 
 Rebuild and run your application. After the first time, you will see a new output file sheepcounter.dilog
 in your cwd. Run your application from the same data a second time and the data in myapp.dilog will be
@@ -55,7 +55,7 @@ is arbitrary. Blocks can be nested to arbitrary order.
 Here is an example of a loop over a std::map with a pointer for its key, illustrating how the
 `block_begin` and `block_end` messages are used.
 
-    `#include <dilog.h> 
+    #include <dilog.h> 
     ...
     std::map<*farm, std::vector<sheep> > herds;
     ...
@@ -69,7 +69,7 @@ Here is an example of a loop over a std::map with a pointer for its key, illustr
         }
         dilog::get("sheepcounter").block_end("loop over farms in herds");
      }
-    ...`
+    ...
 
 The above dilog instrumentation of the application code recognizes that the processing order of the
 herds container elements will vary from one run to the next, but the order of sheep within each herd
