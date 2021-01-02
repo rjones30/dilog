@@ -50,7 +50,9 @@ using the `dilog::block_begin()` and `dilog::block_end()` messages. Each block s
 unique name so that it can be distinguished from other blocks. The same mechanism is used both for
 unordered loops and for threads. Any messages that are emitted within a block are required to be exactly
 the same and in the same order to avoid being flagged, but the order of the blocks of the same name
-is arbitrary. Blocks can be nested to arbitrary order.
+is arbitrary. Blocks can be nested to arbitrary order. Note that failing to terminate a block with a
+`block_end` message will result in a deeply nested block structure that will eventually cause the
+program to hang or abort.
 
 Here is an example of a loop over a std::map with a pointer for its key, illustrating how the
 `block_begin` and `block_end` messages are used.
