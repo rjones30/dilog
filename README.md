@@ -33,11 +33,11 @@ exit.
 
     `#include <dilog.h> 
     ...
-    dilog::printf("myapp", "looking at sheep %d in herd %s\n", isheep, herd);
+    dilog::get("sheepcounter").printf("looking at sheep %d in herd %s\n", isheep, herd);
     ...`
 
-Rebuild and run your application. After the first time, you will see a new output file myapp.dilog in
-your cwd. Run your application from the same data a second time and the data in myapp.dilog will be
+Rebuild and run your application. After the first time, you will see a new output file sheepcounter.dilog
+in your cwd. Run your application from the same data a second time and the data in myapp.dilog will be
 used to check the execution for any divergences in the dilog message sequence that occur relative to
 the first time it ran. A runtime exception will be generated as soon as a divergence is detected.
 
@@ -59,20 +59,30 @@ Here is an example of a loop over a std::map with a pointer for its key, illustr
     std::map<*farm, std::vector<sheep> > herds;
     ...
     for (auto herd : herds) {
-        dilog::block_begin("myapp", "loop over farms in herds");
+        dilog.get("sheepcounter")::block_begin("loop over farms in herds");
         ...
         for (int isheep=0; isheep < herd.second.size(); ++isheep) {
            ...
-           dilog::printf("myapp", "looking at sheep %d in herd %s\n", isheep, herd.first->name);
+           dilog.get("sheepcounter")::printf("looking at sheep %d in herd %s\n", isheep, herd.first->name);
            ...
         }
-        dilog::block_end("myapp", "loop over farms in herds");
+        dilog::get("sheepcounter").block_end("loop over farms in herds");
      }
     ...`
 
 The above dilog instrumentation of the application code recognizes that the processing order of the
 herds container elements will vary from one run to the next, but the order of sheep within each herd
 is expected to be invariant.
+
+## Segmentation strategy
+In some cases involving a very many iterations of a block, it might take a very long time for dilog
+to find that none of the iterations recorded in the input dilog file contain a match to the latest
+message it has received. In that case, a better strategy might be to assign a unique name for each
+iteration of the loop and pass it to the `dilog.get("event_i").printf` statements instead of enclosing
+them all inside a block. This segmentation strategy will result in separate files `event_i.dilog`
+being written in the cwd, with a different i for each iteration of the loop. But then the dilog
+input scanner will have a unique input file to check against each iteration of the loop, and so
+it will run with very little cpu overhead.
 
 ## Test conditions
 I developed and tested this initial release of the code with g++ under gcc 4.8.5, but it should work with
