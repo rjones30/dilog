@@ -43,8 +43,8 @@ using dilogs_map = std::map<std::string, dilog*>;
 class dilog {
  public:
 
-   static dilog& get(const std::string &channel) {
-      dilogs_map dilogs = get_map();
+   static dilog &get(const std::string &channel) {
+      dilogs_map &dilogs = get_map();
       if (dilogs.find(channel) == dilogs.end()) {
          dilog *me = new dilog;
          dilogs[channel] = me;
@@ -63,20 +63,23 @@ class dilog {
       return *dilogs[channel];
    }
 
-   int printf(const char* fmt...) {
-      const unsigned int max_message_len(999);
-      char msg[max_message_len + 1];
+   int myprintf(const char* fmt, ...) {
+      const unsigned int max_message_size(999);
+      char msg[max_message_size + 1];
       va_list args;
       va_start(args, fmt);
-      int bytes = vsnprintf(msg, max_message_len, fmt, args);
+      int bytes = vsnprintf(msg, max_message_size, fmt, args);
       va_end(args);
       std::stringstream message;
       for (int i=0; i < fBlock.size(); ++i)
          message << ((i > 0)? "/" : "[") << fBlock[i];
       message << "] " << msg; 
-      if (message.str()[-1] != '\n')
+      if (message.str().back() != '\n') {
+printf("terminal character of message was %d, appending a nl\n", (int)message.str().back());
          message << std::endl;
+      }
       if (fWriting) {
+printf("supposed to be writing message %s", message.str().c_str());
          *fWriting << message.str();
       }
       else {
@@ -86,6 +89,7 @@ class dilog {
    }
 
    void check_message(std::string message) {
+      printf("bad check\n");
    }
 
    void block_begin(std::string) {
@@ -99,6 +103,11 @@ class dilog {
    }
 
    ~dilog() {
+      std::cout << "called dilog destructor" << std::endl;
+      if (fReading)
+         delete fReading;
+      if (fWriting)
+         delete fWriting;
    }
 
    std::ifstream *fReading;
@@ -112,6 +121,11 @@ class dilog {
       dilogs_holder() {}
       ~dilogs_holder() {
          std::cout << "called dilogs_holder destructor" << std::endl;
+         dilogs_map &dilogs = get_map();
+         for (auto iter : dilogs) {
+            delete iter.second;
+            dilogs.erase(iter.first);
+         }
       }
    };
 
