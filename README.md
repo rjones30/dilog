@@ -5,21 +5,21 @@ that should produce identical results each time it runs, but does not.
 ## Description
 A standard expectation of data processing applications is that repeated runs with the same input data, using
 the same hardware and the same binaries, should produce the same output. Surprisingly, in complex applications
-this a frequently not the case, and fixing it so that it does provides a useful constraint on the correctness
+this a frequently not the case, and making sure that that it does provides a useful constraint on the correctness
 of the algorithm. Divergence happens for a variety of reasons. If the code is multi-threaded, there might be a
 race condition between the threads that accounts for the difference. If there is just a single processing thread,
 the reason might be related to differences in the addresses that are assigned to objects allocated on the heap,
 which can vary from one run to the next. Whatever the source, experience teaches that you ignore this at your
 own peril. Such divergences almost always reveal some unintended interaction between bits of your application
 that should be independent from each other, but are not. I wrote this tool to help me quickly track down the
-point in the execution of the application where the divergence takes place.
+point in the execution of my applications where the divergence takes place.
 
 ## Design
 To use dilog, you need to be able to recompile your application from sources, at least the components where
 the divergence is happening. You need to go into the C++ source and insert a dilog message at the relevant
-points that mark the progress of the execution stream. The dilog message is any plain text string that will
+points that mark the progress of the execution stream. A dilog message is any plain text string that will
 indicate what is happening in the execution stream at that point. Rebuild the application and run it multiple
-times over the same input data. The first time its runs, one or more dilog files (see below for the names)
+times over the same input data. The first time its runs, one or more dilog output files (see below for the names)
 will be written into the working directory. Every time after that, instead of writing new dilog output files,
 it will read the messages from the exiting dilog files and compare with the message stream from the running
 program. As soon as any divergence is found, a runtime exception is generated with a message indicating the
@@ -36,6 +36,11 @@ exit.
     dilog::printf("myapp", "looking at sheep %d in herd %s\n", isheep, herd);
     ...`
 
+Rebuild and run your application. After the first time, you will see a new output file myapp.dilog in
+your cwd. Run your application from the same data a second time and the data in myapp.dilog will be
+used to check the execution for any divergences in the dilog message sequence that occur relative to
+the first time it ran. A runtime exception will be generated as soon as a divergence is detected.
+
 ## Execution threads and blocks
 The main problem to be overcome in the implementation of dilog is to avoid false reports of divergence
 coming from reordering of loops and arbitrary ordering of output from threads. To help dilog recognize
@@ -43,8 +48,8 @@ and eliminate these false positives, the user must insert special markers into t
 using the `dilog::block_begin()` and `dilog::block_end()` messages. Each block should be tagged by a
 unique name so that it can be distinguished from other blocks. The same mechanism is used both for
 unordered loops and for threads. Any messages that are emitted within a block are required to be exactly
-the same and in the same order to avoid being flagged, but the order of the blocks is arbitrary.
-Blocks can be nested to arbitrary order.
+the same and in the same order to avoid being flagged, but the order of the blocks of the same name
+is arbitrary. Blocks can be nested to arbitrary order.
 
 Here is an example of a loop over a std::map with a pointer for its key, illustrating how the
 `block_begin` and `block_end` messages are used.
