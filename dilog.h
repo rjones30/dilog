@@ -24,3 +24,99 @@
 //     ...
 //     dilog::printf("myapp", "sheep %d in herd %s\n", isheep, herd);
 //     ...
+
+#include <stdio.h>
+#include <stdarg.h>
+
+#include <iostream>
+#include <fstream>
+#include <exception>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <map>
+#include <vector>
+
+class dilog;
+using dilogs_map = std::map<std::string, dilog*>;
+
+class dilog {
+ public:
+
+   static dilog& get(const std::string &channel) {
+      dilogs_map dilogs = get_map();
+      if (dilogs.find(channel) == dilogs.end()) {
+         dilog *me = new dilog;
+         dilogs[channel] = me;
+         std::string fname(channel);
+         fname += ".dilog";
+         me->fReading = new std::ifstream(fname.c_str());
+         if (me->fReading->good()) {
+            me->fWriting = 0;
+         }
+         else {
+            me->fReading = 0;
+            me->fWriting = new std::ofstream(fname.c_str());
+         }
+         me->fBlock.push_back(channel);
+      }
+      return *dilogs[channel];
+   }
+
+   int printf(const char* fmt...) {
+      const unsigned int max_message_len(999);
+      char msg[max_message_len + 1];
+      va_list args;
+      va_start(args, fmt);
+      int bytes = vsnprintf(msg, max_message_len, fmt, args);
+      va_end(args);
+      std::stringstream message;
+      for (int i=0; i < fBlock.size(); ++i)
+         message << ((i > 0)? "/" : "[") << fBlock[i];
+      message << "] " << msg; 
+      if (message.str()[-1] != '\n')
+         message << std::endl;
+      if (fWriting) {
+         *fWriting << message.str();
+      }
+      else {
+         check_message(message.str());
+      }
+      return bytes;
+   }
+
+   void check_message(std::string message) {
+   }
+
+   void block_begin(std::string) {
+   }
+
+   void block_end(std::string) {
+   }
+
+ protected:
+   dilog() {
+   }
+
+   ~dilog() {
+   }
+
+   std::ifstream *fReading;
+   std::ofstream *fWriting;
+   std::vector<std::string> fBlock;
+
+ private:
+   class dilogs_holder {
+    public:
+      dilogs_map fDilogs;
+      dilogs_holder() {}
+      ~dilogs_holder() {
+         std::cout << "called dilogs_holder destructor" << std::endl;
+      }
+   };
+
+   static dilogs_map& get_map() {
+       static dilogs_holder holder;
+       return holder.fDilogs;
+   }
+};
