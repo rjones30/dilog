@@ -39,41 +39,142 @@
 #include <stack>
 
 class dilog;
-struct dilogs_block_t {
-   int lineno;
-   int beginline;
-   int endline;
-   std::streampos gptr;
-   std::streampos eptr;
-   std::map<std::streampos, int> glist;
-   std::vector<std::string> mlist;
-   std::string prefix;
-   dilogs_block_t() : lineno(0), beginline(0), endline(0), gptr(0), eptr(0) {}
-};
 using dilogs_map_t = std::map<std::string, dilog*>;
 
 class dilog {
  public:
+   class block {
+    private:
+      int lineno;
+      int beginline;
+      int endline;
+      std::streampos gptr;
+      std::streampos eptr;
+      std::map<std::streampos, int> glist;
+      std::vector<std::string> mlist;
+      std::string prefix;
+      std::string chan;
+      std::string name;
+
+    public:
+      block()
+       : lineno(0), beginline(0), endline(0), gptr(0), eptr(0)
+      {}
+
+      block(const std::string &channel, const std::string &blockname)
+       : lineno(0), beginline(0), endline(0), gptr(0), eptr(0),
+         chan(channel), name(blockname)
+      {
+         dilog &dlog = dilog::get(channel);
+         block &top = *dlog.fBlocks.top();
+         dlog.fBlocks.push(this);
+         prefix = top.prefix + "/" + name;
+         if (dlog.fLastBlock.prefix == prefix) {
+            copy(dlog.fLastBlock);
+         }
+         else {
+            lineno = top.lineno;
+            beginline = top.lineno;
+         }
+         if (dlog.fWriting) {
+            *dlog.fWriting << "[" << prefix << "[" << std::endl;
+            ++lineno;
+         }
+         else {
+            std::string mexpected = "[" + prefix + "[";
+            std::string nextmsg;
+            while (getline(*dlog.fReading, nextmsg, '\n')) {
+               gptr = dlog.fReading->tellg();
+               beginline = lineno;
+               ++lineno;
+               if (nextmsg.find(prefix) != 1)
+                  continue;
+               else if (nextmsg == mexpected)
+                  break;
+               else
+                  throw std::runtime_error("dilog::block error: "
+                        "expected new execution block \"" +
+                        prefix + "\" at line " + std::to_string(lineno)
+                        + " in " + channel + ".dilog");
+            }
+         }
+      }
+
+      ~block() {
+         dilog &dlog = dilog::get(chan);
+         if (dlog.fBlocks.top() != this)
+            return;
+         dlog.fBlocks.pop();
+         block &top = *dlog.fBlocks.top();
+         if (dlog.fWriting) {
+            *dlog.fWriting << "]" << prefix << "]" << std::endl;
+            top.lineno = ++lineno;
+         }
+         else {
+            std::string mexpected = "]" + prefix + "]";
+            std::string nextmsg;
+            while (getline(*dlog.fReading, nextmsg, '\n')) {
+               ++lineno;
+               if (nextmsg.find(prefix) != 1)
+                  continue;
+               else if (nextmsg == mexpected)
+                  break;
+               else if (dlog.next_block())
+                  continue;
+               else
+                  throw std::runtime_error("dilog::block error: "
+                        "expected end of execution block \"" +
+                        prefix + "\" at line " + std::to_string(lineno)
+                        + " in " + chan + ".dilog");
+            }
+            glist.erase(gptr);
+            gptr = dlog.fReading->tellg();
+            if (gptr > eptr)
+               eptr = gptr;
+            endline = lineno;
+            if (glist.size() > 0) {
+               gptr = glist.begin()->first;
+               lineno = glist.begin()->second;
+               dlog.fReading->seekg(gptr);
+            }
+            else if (eptr > top.gptr) {
+               top.lineno = endline;
+               top.gptr = eptr;
+            }
+            else {
+               top.lineno = lineno;
+               top.gptr = gptr;
+            }
+            mlist.clear();
+            dlog.fLastBlock.copy(*this);
+            if (glist.size() > 0) {
+               top.mlist.push_back("[[" + name);
+               top.mlist.insert(top.mlist.end(), mlist.begin(), mlist.end());
+               top.mlist.push_back("]]" + name);
+            }
+            dlog.fReading->seekg(top.gptr);
+         }
+      }
+
+      void copy(const block &src) {
+         lineno = src.lineno;
+         beginline = src.beginline;
+         endline = src.endline;
+         gptr = src.gptr;
+         eptr = src.eptr;
+         glist = src.glist;
+         mlist = src.mlist;
+         prefix = src.prefix;
+         chan = src.chan;
+         name = src.name;
+      }
+      friend class dilog;
+   };
 
    static dilog &get(const std::string &channel) {
       dilogs_map_t &dilogs = get_map();
-      if (dilogs.find(channel) == dilogs.end()) {
-         dilog *me = new dilog;
-         dilogs[channel] = me;
-         std::string fname(channel);
-         fname += ".dilog";
-         me->fReading = new std::ifstream(fname.c_str());
-         if (me->fReading->good()) {
-            me->fWriting = 0;
-         }
-         else {
-            me->fReading = 0;
-            me->fWriting = new std::ofstream(fname.c_str());
-         }
-         dilogs_block_t sblock;
-         sblock.prefix = channel;
-         me->fBlocks.push(sblock);
-      }
+      if (dilogs.find(channel) == dilogs.end())
+         dilogs[channel] = new dilog(channel);
       return *dilogs[channel];
    }
 
@@ -84,145 +185,41 @@ class dilog {
       va_start(args, fmt);
       int bytes = vsnprintf(msg, max_message_size, fmt, args);
       va_end(args);
-      dilogs_block_t &block = fBlocks.top();
-      std::string message = "[" + block.prefix + "]" + msg;
+      block &top = *fBlocks.top();
+      std::string message = "[" + top.prefix + "]" + msg;
       if (message.back() != '\n')
          message += "\n";
       if (fWriting) {
          *fWriting << message;
-         ++block.lineno;
+         ++top.lineno;
       }
       else
-         check_message(message);
+         check_message(msg);
       return bytes;
    }
 
-   void check_message(std::string message) {
-      dilogs_block_t &block = fBlocks.top();
-      std::string mexpected = "[" + block.prefix + "]" + message;
-      std::string nextmsg;
-      while (getline(*fReading, nextmsg, '\n')) {
-         ++block.lineno;
-         if (nextmsg.find(block.prefix) != 1)
-            continue;
-         else if (nextmsg == mexpected) {
-            if (fBlocks.size() > 1)
-               block.mlist.push_back("[]" + message);
-            return;
-         }
-         else if (fBlocks.size() > 1) {
-            if (! block_next())
-               break;
-         }
-         break;
-      }
-      throw std::runtime_error("bad goat");
-   }
-
-   void block_begin(std::string name) {
-      dilogs_block_t &block = fBlocks.top();
-      if (fWriting) {
-         dilogs_block_t newblock(block);
-         newblock.prefix += "/" + name;
-         *fWriting << "[" << newblock.prefix << "[" << std::endl;
-         ++newblock.lineno;
-         fBlocks.push(newblock);
-      }
-      else {
-         std::streampos gptr = fReading->tellg();
-         std::string mexpected = "[" + block.prefix + "/" + name + "[";
-         std::string mexpected2 = "[" + block.prefix + "[";
-         if (mexpected2.find(name + "[") == mexpected2.npos)
-            mexpected2 = ">>>>><<<<<";
-         std::string nextmsg;
-         while (getline(*fReading, nextmsg, '\n')) {
-            ++block.lineno;
-            if (nextmsg.find(block.prefix) != 1)
-               continue;
-            else if (nextmsg == mexpected)
-               break;
-            else if (nextmsg == mexpected2)
-               return;
-            else
-               throw std::runtime_error("bad elk");
-         }
-         dilogs_block_t newblock;
-         newblock.prefix = block.prefix + "/" + name;
-         newblock.gptr = block.gptr;
-         newblock.beginline = block.lineno - 1;
-         fBlocks.push(newblock);
-      }
-   }
-
-   void block_end(std::string name) {
-      dilogs_block_t &block = fBlocks.top();
-      std::string stail = block.prefix + "[";
-      if (stail.find("/" + name + "[") == stail.npos) {
-         throw std::runtime_error("bad beef");
-      }
-      else if (fWriting) {
-         int lineno = block.lineno;
-         *fWriting << "]" << block.prefix << "]" << std::endl;
-         fBlocks.pop();
-         fBlocks.top().lineno = ++lineno;
-      }
-      else {
-         std::string mexpected = "]" + block.prefix + "]";
-         std::string nextmsg;
-         while (getline(*fReading, nextmsg, '\n')) {
-            ++block.lineno;
-            if (nextmsg.find(block.prefix) != 1)
-               continue;
-            else if (nextmsg == mexpected)
-               break;
-            else if (block_next())
-               continue;
-            else
-               throw std::runtime_error("bad rabbit");
-         }
-         std::streampos gptr = fReading->tellg();
-         if (gptr > block.eptr) {
-            block.eptr = gptr;
-            block.endline = block.lineno;
-         }
-         block.glist.erase(block.gptr);
-         if (block.glist.size() > 0) {
-            block.gptr = block.glist.begin()->first;
-            block.lineno = block.glist.begin()->second;
-            fReading->seekg(block.gptr);
-         }
-         else {
-            dilogs_block_t bfinished(block);
-            fBlocks.pop();
-            dilogs_block_t &bresumed = fBlocks.top();
-            if (bfinished.eptr > gptr) {
-               bresumed.lineno = bfinished.endline;
-               bresumed.endline = bfinished.endline;
-               bresumed.gptr = bfinished.eptr;
-               bresumed.eptr = bfinished.eptr;
-            }
-            else {
-               bresumed.lineno = bfinished.lineno;
-               bresumed.endline= bfinished.lineno;
-               bresumed.gptr = gptr;
-               bresumed.eptr = gptr;
-            }
-            bresumed.mlist.push_back("[[" + name);
-            bresumed.mlist.insert(bresumed.mlist.end(),
-                                  bfinished.mlist.begin(),
-                                  bfinished.mlist.end());
-            bresumed.mlist.push_back("]]" + name);
-            fReading->seekg(bresumed.gptr);
-         }
-      }
-   }
-
-   int get_lineno() {
-      return fBlocks.top().lineno;
+   int get_lineno() const {
+      return fBlocks.top()->lineno;
    }
 
  protected:
-   dilog() {
+   dilog() = delete;
+   dilog(const std::string& channel) {
+      dilogs_map_t &dilogs = get_map();
+      dilogs[channel] = this;
+      std::string fname(channel);
+      fname += ".dilog";
+      fReading = new std::ifstream(fname.c_str());
+      if (fReading->good()) {
+         fWriting = 0;
+      }
+      else {
+         fReading = 0;
+         fWriting = new std::ofstream(fname.c_str());
+      }
+      block *bot = new block;
+      bot->prefix = channel;
+      fBlocks.push(bot);
    }
 
    ~dilog() {
@@ -230,33 +227,62 @@ class dilog {
          delete fReading;
       if (fWriting)
          delete fWriting;
+      delete fBlocks.top();
    }
 
-   bool block_next() {
-      dilogs_block_t &block = fBlocks.top();
-      std::string mexpected = "]" + block.prefix + "]";
+   void check_message(std::string message) {
+      int nl;
+      while ((nl = message.find('\n')) != message.npos)
+         message.erase(nl);
+      block &top = *fBlocks.top();
+      std::string mexpected = "[" + top.prefix + "]" + message;
       std::string nextmsg;
       while (getline(*fReading, nextmsg, '\n')) {
-         ++block.lineno;
+         ++top.lineno;
+         if (nextmsg.find(top.prefix) != 1)
+            continue;
+         else if (nextmsg == mexpected) {
+            if (fBlocks.size() > 1)
+               top.mlist.push_back("[]" + message);
+            return;
+         }
+         else if (fBlocks.size() > 1) {
+            if (next_block())
+               continue;
+         }
+         break;
+      }
+      throw std::runtime_error("dilog::printf error: "
+            "expected dilog message \"" + message +
+            "\" at line " + std::to_string(top.lineno)
+            + " in " + top.chan + ".dilog");
+   }
+
+   bool next_block() {
+      block &top = *fBlocks.top();
+      std::string mexpected = "]" + top.prefix + "]";
+      std::string nextmsg;
+      while (getline(*fReading, nextmsg, '\n')) {
+         ++top.lineno;
          if (nextmsg == mexpected)
             break;
       }
-      block.glist[block.gptr] = block.beginline;
-      auto bnext = ++block.glist.find(block.gptr);
-      if (bnext != block.glist.end()) {
-         block.gptr = bnext->first;
-         block.lineno = bnext->second;
-         block.beginline = bnext->second;
-         fReading->seekg(block.gptr);
+      top.glist[top.gptr] = top.beginline;
+      auto bnext = ++top.glist.find(top.gptr);
+      if (bnext != top.glist.end()) {
+         top.gptr = bnext->first;
+         top.lineno = bnext->second;
+         top.beginline = bnext->second;
+         fReading->seekg(top.gptr);
       }
       else {
-         block.gptr = fReading->tellg();
-         block.beginline = block.lineno;
+         top.gptr = fReading->tellg();
+         top.beginline = top.lineno;
       }
-      mexpected = "[" + block.prefix + "[";
+      mexpected = "[" + top.prefix + "[";
       while (getline(*fReading, nextmsg, '\n')) {
-         ++block.lineno;
-         if (nextmsg.find(block.prefix) != 1)
+         ++top.lineno;
+         if (nextmsg.find(top.prefix) != 1)
             continue;
          else if (nextmsg != mexpected)
             return false;
@@ -264,11 +290,12 @@ class dilog {
             break;
       }
       try {
-         for (std::string msg : block.mlist) {
+         std::map<std::string, block*> blocks;
+         for (std::string msg : top.mlist) {
             if (msg.substr(0,2) == "[[")
-               block_begin(msg.substr(2));
+               blocks[msg.substr(2)] = new block(top.chan, msg.substr(2));
             else if (msg.substr(0,2) == "]]")
-               block_end(msg.substr(2));
+               delete blocks[msg.substr(2)];
             else
                printf(msg.substr(2).c_str());
          }
@@ -281,7 +308,8 @@ class dilog {
 
    std::ifstream *fReading;
    std::ofstream *fWriting;
-   std::stack<dilogs_block_t> fBlocks;
+   std::stack<block*> fBlocks;
+   block fLastBlock;
 
  private:
    class dilogs_holder {
