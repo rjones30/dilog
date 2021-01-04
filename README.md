@@ -42,40 +42,45 @@ in your cwd. Run your application from the same data a second time and the data 
 used to check the execution for any divergences in the dilog message sequence that occur relative to
 the first time it ran. A runtime exception will be generated as soon as a divergence is detected.
 
-## Execution threads and blocks
+## Execution blocks
 The main problem to be overcome in the implementation of dilog is to avoid false reports of divergence
-coming from reordering of loops and arbitrary ordering of output from threads. To help dilog recognize
+coming from reordering of loops and arbitrary ordering threads execution. To help dilog recognize
 and eliminate these false positives, the user must insert special markers into the dilog message stream
-using the `dilog::block_begin()` and `dilog::block_end()` messages. Each block should be tagged by a
-unique name so that it can be distinguished from other blocks. The same mechanism is used both for
-unordered loops and for threads. Any messages that are emitted within a block are required to be exactly
-the same and in the same order to avoid being flagged, but the order of the blocks of the same name
-is arbitrary. Blocks can be nested to arbitrary order. Note that failing to terminate a block with a
-`block_end` message will result in a deeply nested block structure that will eventually cause the
-program to hang or abort.
+using the `dilog::block` constructor and destructor. Each block must be assigned to a dilog stream and
+be given a unique name so that it can be distinguished from other blocks. A block of a given name begins
+when the dilog::block is constructed and exits by the destructor. A block may be executed an arbitrary
+number of times, but all iterations of a block must follow one after another with nothing in between,
+and they cannot overlap. The same execution block mechanism is used to handle reordering issues both
+for unordered loops and for threads. Because their execution can overlap, special considerations
+should be used to handle blocks within threads that can execute simultaneously, as described in the
+next section. Blocks can be nested to arbitrary order.
 
 Here is an example of a loop over a std::map with a pointer for its key, illustrating how the
-`block_begin` and `block_end` messages are used.
+`dilog::block` object works.
 
     #include <dilog.h> 
     ...
-    std::map<*farm, std::vector<sheep> > herds;
+    std::map<farm*, std::vector<sheep> > herds;
     ...
     for (auto herd : herds) {
-        dilog::get("sheepcounter").block_begin("loop over farms in herds");
+        dilog::block myloop("sheepcounter", "farmloop");
         ...
         for (int isheep=0; isheep < herd.second.size(); ++isheep) {
            ...
            dilog::get("sheepcounter").printf("looking at sheep %d in herd %s\n", isheep, herd.first->name);
            ...
         }
-        dilog::get("sheepcounter").block_end("loop over farms in herds");
      }
     ...
 
-The above dilog instrumentation of the application code recognizes that the processing order of the
-herds container elements will vary from one run to the next, but the order of sheep within each herd
-is expected to be invariant.
+The above loop will execute its iterations in a different order from one run to the next, but the
+fact that the dilog messages take place within the context of a dilog::block means that no dilog
+exception will be generated simply because they are emitted in a different order. Any number of
+dilog messages would be allowed within the block. Note that dynamic allocation of ``myloop`` on the
+stack automatically calls the destructor whenever `myloop` goes out of scope, so explicit delete of
+the dilog::block objects is not necessary.
+
+## Multithread strategy
 
 ## Segmentation strategy
 In some cases involving a very many iterations of a block, it might take a very long time for dilog
