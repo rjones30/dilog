@@ -31,3 +31,6 @@
 *.out
 *.app
 t
+
+# Test output files
+mytrun.dilog
