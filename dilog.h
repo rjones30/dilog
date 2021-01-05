@@ -37,6 +37,7 @@
 #include <map>
 #include <vector>
 #include <stack>
+#include <mutex>
 
 class dilog;
 using dilogs_map_t = std::map<std::string, dilog*>;
@@ -172,9 +173,19 @@ class dilog {
    };
 
    static dilog &get(const std::string &channel) {
+      static std::mutex mutex;
+      std::lock_guard<std::mutex> guard(mutex);
       dilogs_map_t &dilogs = get_map();
-      if (dilogs.find(channel) == dilogs.end())
+      std::thread::id tid = std::this_thread::get_id();
+      if (dilogs.find(channel) == dilogs.end()) {
          dilogs[channel] = new dilog(channel);
+         dilogs[channel]->fThread_id = tid;
+      }
+      if (dilogs[channel]->fThread_id != tid) {
+         throw std::runtime_error("dilog::get error: "
+               "access to channel \"" + channel +
+               "\" attempted from more than one thread");
+      }
       return *dilogs[channel];
    }
 
@@ -205,8 +216,6 @@ class dilog {
  protected:
    dilog() = delete;
    dilog(const std::string& channel) {
-      dilogs_map_t &dilogs = get_map();
-      dilogs[channel] = this;
       std::string fname(channel);
       fname += ".dilog";
       fReading = new std::ifstream(fname.c_str());
@@ -310,6 +319,7 @@ class dilog {
    std::ofstream *fWriting;
    std::stack<block*> fBlocks;
    block fLastBlock;
+   std::thread::id fThread_id;
 
  private:
    class dilogs_holder {
