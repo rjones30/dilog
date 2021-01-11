@@ -42,7 +42,7 @@
 #include <stack>
 #include <mutex>
 
-std::string dilog_logo("-------dilog------dilog------dilog-------");
+#define DILOG_LOGO("-------dilog------dilog------dilog-------");
 
 class dilog;
 using dilogs_map_t = std::map<std::string, dilog*>;
@@ -166,9 +166,9 @@ class dilog {
                              std::to_string(dlog.fLineno) + 
                              " in " + chan + ".dilog"
                              " but found \"" + nextmsg + "\" instead.";
-               std::cerr << dilog_logo << std::endl;
+               std::cerr << DILOG_LOGO << std::endl;
                std::cerr << dlog.fError << std::endl;
-               std::cerr << dilog_logo << std::endl;
+               std::cerr << DILOG_LOGO << std::endl;
                //throw std::runtime_error(dlog.fError); !! Not from destructor !!
             }
             auto &blinks = dlog.fBlinks[prefix];
@@ -437,7 +437,7 @@ class dilog {
          return true;
       }
       std::string prefix = fBlocks.top()->prefix;
-      std::cerr << dilog_logo << std::endl;
+      std::cerr << DILOG_LOGO << std::endl;
       std::cerr << "Fatal error in dilog::next_block - "
                 << "no more iterations of block " << prefix
                 << " to search, giving up at line " << fLineno << std::endl
@@ -470,7 +470,7 @@ class dilog {
             std::cerr << "  " << fRecord[i].substr(2) << std::endl;
          }
       }
-      std::cerr << dilog_logo << std::endl;
+      std::cerr << DILOG_LOGO << std::endl;
       return false;
    }
 
