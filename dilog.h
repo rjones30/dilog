@@ -42,7 +42,7 @@
 #include <stack>
 #include <mutex>
 
-#define DILOG_LOGO("-------dilog------dilog------dilog-------");
+#define DILOG_LOGO "-------dilog------dilog------dilog-------"
 
 class dilog;
 using dilogs_map_t = std::map<std::string, dilog*>;
