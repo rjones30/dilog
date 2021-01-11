@@ -42,6 +42,8 @@
 #include <stack>
 #include <mutex>
 
+std::string dilog_logo("-------dilog------dilog------dilog-------");
+
 class dilog;
 using dilogs_map_t = std::map<std::string, dilog*>;
 
@@ -145,7 +147,6 @@ class dilog {
          dilog &dlog = dilog::get(chan, false);
          if (dlog.fBlocks.top() != this)
             return;
-         dlog.fBlocks.pop();
          if (dlog.fWriting) {
             *dlog.fWriting << "]" << prefix << "]" << std::endl;
             ++dlog.fLineno;
@@ -154,24 +155,20 @@ class dilog {
             std::string mexpected = "]" + prefix + "]";
             for (std::string nextmsg; std::getline(*dlog.fReading, nextmsg);) {
                ++dlog.fLineno;
-               if (nextmsg.find(prefix) != 1) {
-std::cerr << "~block finds strange line, ignoring" << std::endl;
+               if (nextmsg.find(prefix) != 1)
                   continue;
-               }
-               else if (nextmsg == mexpected) {
-std::cerr << "~block finds end of block, good" << std::endl;
+               else if (nextmsg == mexpected)
                   break;
-               }
-               else if (dlog.next_block(nextmsg)) {
-std::cerr << "~block skipped ahead and tries again on subsequent matching block" << std::endl;
+               else if (dlog.next_block(nextmsg))
                   continue;
-               }
                dlog.fError = "dilog::block error: expected end of execution"
                              " block \"" + prefix + "\" at line " + 
                              std::to_string(dlog.fLineno) + 
                              " in " + chan + ".dilog"
                              " but found \"" + nextmsg + "\" instead.";
+               std::cerr << dilog_logo << std::endl;
                std::cerr << dlog.fError << std::endl;
+               std::cerr << dilog_logo << std::endl;
                //throw std::runtime_error(dlog.fError); !! Not from destructor !!
             }
             auto &blinks = dlog.fBlinks[prefix];
@@ -185,13 +182,14 @@ std::cerr << "~block skipped ahead and tries again on subsequent matching block"
                dlog.fLineno = blinks.begin()->second;
                blinks.erase(blinks.begin());
             }
-            if (dlog.fBlocks.size() > 1) {
+            if (dlog.fBlocks.size() > 2) {
                dlog.fRecord.push_back("]]" + prefix);
             }
             else {
                dlog.fRecord.clear();
             }
          }
+         dlog.fBlocks.pop();
       }
       friend class dilog;
    };
@@ -313,19 +311,13 @@ std::cerr << "~block skipped ahead and tries again on subsequent matching block"
       for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
          ++fLineno;
          if (nextmsg.find(top.prefix) != 1) {
-std::cerr << "blank check for \"" << mexpected << "\" at line " << fLineno << std::endl;
             gptr = fReading->tellg();
             continue;
          }
-         else if (nextmsg == mexpected) {
-std::cerr << "good check for \"" << mexpected << "\" at line " << fLineno << std::endl;
+         else if (nextmsg == mexpected)
             return;
-         }
-         else if (next_block(nextmsg)) {
-std::cerr << "next block for \"" << mexpected << "\" at line " << fLineno << std::endl;
+         else if (next_block(nextmsg))
             continue;
-         }
-std::cerr << "failed check for \"" << mexpected << "\" at line " << fLineno << std::endl;
          fError = "dilog::printf error: expected dilog message"
                   " \"" + msg + "\" at line " + std::to_string(fLineno)
                   + " in " + fChannel + ".dilog but found \"" 
@@ -360,14 +352,12 @@ std::cerr << "failed check for \"" << mexpected << "\" at line " << fLineno << s
          blinks[top.base] = top.beginline;
          std::string mexpected = "]" + top.prefix + "]";
          if (lastmsg != mexpected) {
-std::cerr << "next_block advancing to end of block " << top.prefix << " from line " << fLineno << std::endl;
             for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
                ++fLineno;
                if (nextmsg == mexpected)
                   break;
             }
          }
-std::cerr << "next_block advanced to end of block at line " << fLineno << std::endl;
          auto blink = blinks.find(top.base);
          if (++blink != blinks.end()) {
             fReading->seekg(blink->first);
@@ -375,28 +365,22 @@ std::cerr << "next_block advanced to end of block at line " << fLineno << std::e
          }
          top.base = fReading->tellg();
          top.beginline = fLineno;
-std::cerr << "next_block looking for new block iteration at line " << fLineno << std::endl;
          mexpected = "[" + top.prefix + "[";
          for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
             ++fLineno;
             if (nextmsg == mexpected)
                break;
-            fReading->seekg(top.base);
-            fLineno = top.beginline;
-            if (fBlocks.top() == fBreplay.top()) {
+            else if (fBreplay.size() > 0 && fBreplay.top() == fBlocks.top()) {
                delete fBlocks.top();
                fBreplay.pop();
             }
-            else {
+            else
                fBlanks.push(fBlocks.top());
-            }
             fBlocks.pop();
             return next_block(nextmsg);
          }
-std::cerr << "next_block found new block iteration, continuing at line " << fLineno << std::endl;
          std::string prefix = top.prefix;
          for (unsigned int ireplay = top.ireplay; ireplay < fRecord.size(); ++ireplay) {
-std::cerr << "next_block replay at position " << ireplay << ": " << fRecord[ireplay] << std::endl;
             std::string mexpected = fRecord[ireplay];
             int dir;
             if (mexpected.find("[[") == 0) {
@@ -420,7 +404,8 @@ std::cerr << "next_block replay at position " << ireplay << ": " << fRecord[irep
                else if (nextmsg != mexpected)
                   return next_block(nextmsg);
                if (dir == 1) {
-                  if (fBlanks.top()->prefix == prefix && 
+                  if (fBlanks.size() > 0 &&
+                      fBlanks.top()->prefix == prefix && 
                       fBlanks.top()->ireplay == ireplay+1)
                   {
                      fBlanks.top()->base = fReading->tellg();
@@ -437,7 +422,8 @@ std::cerr << "next_block replay at position " << ireplay << ": " << fRecord[irep
                   }
                }
                else if (dir == -1) {
-                  assert (fBlocks.top() == fBreplay.top());
+                  assert (fBreplay.size() > 0);
+                  assert (fBreplay.top() == fBlocks.top());
                   delete fBreplay.top();
                   fBreplay.pop();
                   fBlocks.pop();
@@ -450,6 +436,41 @@ std::cerr << "next_block replay at position " << ireplay << ": " << fRecord[irep
          assert (fBlanks.size() == 0);
          return true;
       }
+      std::string prefix = fBlocks.top()->prefix;
+      std::cerr << dilog_logo << std::endl;
+      std::cerr << "Fatal error in dilog::next_block - "
+                << "no more iterations of block " << prefix
+                << " to search, giving up at line " << fLineno << std::endl
+                << "because none of the remaining unmatched "
+                << "iterations matches the loop context:" << std::endl;
+      int level=1;
+      for (unsigned int i=0; i < fRecord.size(); ++i) {
+         for (int j=1; j < level; ++j)
+            std::cerr << "  ";
+         if (fRecord[i].find("[[") == 0) {
+            std::string prefix = fRecord[i].substr(2);
+            std::cerr << "  " << prefix << "[["
+                      << " (unmatched at line ";
+            int first=1;
+            for (auto biter : fBlinks[prefix]) {
+               if (first)
+                  first = 0;
+               else
+                  std::cerr << ",";
+               std::cerr << biter.second;
+            }
+            std::cerr << ")" << std::endl;
+            ++level;
+         }
+         else if (fRecord[i].find("]]") == 0) {
+            std::cerr << fRecord[i] << std::endl;
+            --level;
+         }
+         else {
+            std::cerr << "  " << fRecord[i].substr(2) << std::endl;
+         }
+      }
+      std::cerr << dilog_logo << std::endl;
       return false;
    }
 
