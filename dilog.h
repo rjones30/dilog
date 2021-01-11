@@ -27,6 +27,9 @@
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <signal.h>
+#include <string.h>
+#include <assert.h>
 
 #include <iostream>
 #include <fstream>
@@ -43,136 +46,174 @@ class dilog;
 using dilogs_map_t = std::map<std::string, dilog*>;
 
 class dilog {
+
+ // Objects of class dilog are created through the static dilog::get method,
+ // identified by channel name. The first get("myapp") would create a new
+ // dilog object and open file myapp.dilog for reading, or for writing if
+ // a file by this name does not exist in the cwd. An ordered sequence of
+ // messages issued through dilog::printf are read from the input file, or
+ // written if open for writing. Any mismatch between a printf message and
+ // the corresponding record in myapp.dilog will trigger a runtime exception.
+
  public:
    class block {
-    private:
-      int lineno;
-      int beginline;
-      int endline;
-      std::streampos gptr;
-      std::streampos eptr;
-      std::map<std::streampos, int> glist;
-      std::vector<std::string> mlist;
-      std::string prefix;
-      std::string chan;
-      std::string name;
 
-    public:
+    // Objects of class dilog::block are constructed by the user inside a
+    // loop that might be reordered at runtime. The printf message scanner
+    // automatically reorders at runtime all contiguous iterations of the
+    // code block defined by the lifetime of the user dilog::block object
+    // in seeking a match between the contents of the recorded dilog file
+    // and the runtime message sequence.
+
+    private:
+      std::string chan;        // name of associated channel
+      std::string name;        // name of block, eg. "loop1"
+      std::string prefix;      // slash-delimited pathname of block
+      std::streampos base;     // file offset to current iteration of this block
+      unsigned int beginline;  // file line number associated with base
+      unsigned int ireplay;    // offset in dilog::fRecord where replay starts
+                               // to check the content of this iteration
       block()
-       : lineno(0), beginline(0), endline(0), gptr(0), eptr(0)
+       : base(0), beginline(0), ireplay(0)
       {}
 
-      block(const std::string &channel, const std::string &blockname)
-       : lineno(0), beginline(0), endline(0), gptr(0), eptr(0),
-         chan(channel), name(blockname)
+    public:
+      block(const std::string &channel, const std::string &blockname,
+                                        bool threadsafe=true)
+       : chan(channel), name(blockname), base(0), beginline(0), ireplay(0)
       {
-         dilog &dlog = dilog::get(channel);
+       // Initialize a new iteration of block with name blockname on dilog
+       // object named channel, generating a new dilog object if it does
+       // not already exist. Normal behavior is to throw and exception
+       // if access to this channel is attempted from more than one C++
+       // execution thread. Set threadsafe = false to suppress this
+       // check, at the risk of creating race conditions.
+ 
+         dilog &dlog = dilog::get(channel, threadsafe);
+         if (dlog.fError.size() > 0)
+            throw std::runtime_error(dlog.fError);
          block &top = *dlog.fBlocks.top();
          dlog.fBlocks.push(this);
          prefix = top.prefix + "/" + name;
-         if (dlog.fLastBlock.prefix == prefix) {
-            copy(dlog.fLastBlock);
-         }
-         else {
-            lineno = top.lineno;
-            beginline = top.lineno;
-         }
          if (dlog.fWriting) {
             *dlog.fWriting << "[" << prefix << "[" << std::endl;
-            ++lineno;
+            ++dlog.fLineno;
          }
          else {
+            base = dlog.fReading->tellg();
+            beginline = dlog.fLineno;
             std::string mexpected = "[" + prefix + "[";
-            std::string nextmsg;
-            while (getline(*dlog.fReading, nextmsg, '\n')) {
-               gptr = dlog.fReading->tellg();
-               beginline = lineno;
-               ++lineno;
-               if (nextmsg.find(prefix) != 1)
+            for (std::string nextmsg; std::getline(*dlog.fReading, nextmsg);) {
+               ++dlog.fLineno;
+               if (nextmsg.find(prefix) != 1) {
+                  base = dlog.fReading->tellg();
+                  beginline = dlog.fLineno;
                   continue;
-               else if (nextmsg == mexpected)
-                  break;
-               else
-                  throw std::runtime_error("dilog::block error: "
-                        "expected new execution block \"" +
-                        prefix + "\" at line " + std::to_string(lineno)
-                        + " in " + channel + ".dilog");
+               }
+               else if (nextmsg == mexpected) {
+                  dlog.fRecord.push_back("[[" + prefix);
+                  ireplay = dlog.fRecord.size();
+                  return;
+               }
+               dlog.fError = "dilog::block error: expected new execution block"
+                             " \"" + prefix + "\" at line "
+                             + std::to_string(dlog.fLineno)
+                             + " in " + channel + ".dilog" + "\n"
+                             "but found \"" + nextmsg + "\" instead.";
+               throw std::runtime_error(dlog.fError);
             }
          }
       }
 
-      ~block() {
-         dilog &dlog = dilog::get(chan);
+      ~block()
+      {
+       // Terminate an open iteration block. The names of the block and
+       // channel are saved in the object. This method is normally called
+       // automatically at exit from a loop in user code, as the block
+       // object declared inside the loop goes out of scope and garbage
+       // collection automatically calls the destructor. The destructor
+       // can trigger non-trivial operations on the input file, as it
+       // requires that the iteration block terminate immediately with
+       // no further messages. If a consistency violation is found, it
+       // cannot throw an exception as a destructor should not do that,
+       // but it prints to stderr and sets an object variable so that
+       // an exception will be thrown at the next action on this dilog
+       // channel.
+ 
+         if (chan.size() == 0)
+            return;
+         dilog &dlog = dilog::get(chan, false);
          if (dlog.fBlocks.top() != this)
             return;
          dlog.fBlocks.pop();
-         block &top = *dlog.fBlocks.top();
          if (dlog.fWriting) {
             *dlog.fWriting << "]" << prefix << "]" << std::endl;
-            top.lineno = ++lineno;
+            ++dlog.fLineno;
          }
          else {
             std::string mexpected = "]" + prefix + "]";
-            std::string nextmsg;
-            while (getline(*dlog.fReading, nextmsg, '\n')) {
-               ++lineno;
-               if (nextmsg.find(prefix) != 1)
+            for (std::string nextmsg; std::getline(*dlog.fReading, nextmsg);) {
+               ++dlog.fLineno;
+               if (nextmsg.find(prefix) != 1) {
+std::cerr << "~block finds strange line, ignoring" << std::endl;
                   continue;
-               else if (nextmsg == mexpected)
+               }
+               else if (nextmsg == mexpected) {
+std::cerr << "~block finds end of block, good" << std::endl;
                   break;
-               else if (dlog.next_block())
+               }
+               else if (dlog.next_block(nextmsg)) {
+std::cerr << "~block skipped ahead and tries again on subsequent matching block" << std::endl;
                   continue;
-               else
-                  throw std::runtime_error("dilog::block error: "
-                        "expected end of execution block \"" +
-                        prefix + "\" at line " + std::to_string(lineno)
-                        + " in " + chan + ".dilog");
+               }
+               dlog.fError = "dilog::block error: expected end of execution"
+                             " block \"" + prefix + "\" at line " + 
+                             std::to_string(dlog.fLineno) + 
+                             " in " + chan + ".dilog"
+                             " but found \"" + nextmsg + "\" instead.";
+               std::cerr << dlog.fError << std::endl;
+               //throw std::runtime_error(dlog.fError); !! Not from destructor !!
             }
-            glist.erase(gptr);
-            gptr = dlog.fReading->tellg();
-            if (gptr > eptr)
-               eptr = gptr;
-            endline = lineno;
-            if (glist.size() > 0) {
-               gptr = glist.begin()->first;
-               lineno = glist.begin()->second;
-               dlog.fReading->seekg(gptr);
+            auto &blinks = dlog.fBlinks[prefix];
+            blinks.erase(base);
+            if (blinks.size() > 0) {
+               base = dlog.fReading->tellg();
+               if (base > blinks.rbegin()->first) {
+                  blinks[base] = dlog.fLineno;
+               }
+               dlog.fReading->seekg(blinks.begin()->first);
+               dlog.fLineno = blinks.begin()->second;
+               blinks.erase(blinks.begin());
             }
-            else if (eptr > top.gptr) {
-               top.lineno = endline;
-               top.gptr = eptr;
+            if (dlog.fBlocks.size() > 1) {
+               dlog.fRecord.push_back("]]" + prefix);
             }
             else {
-               top.lineno = lineno;
-               top.gptr = gptr;
+               dlog.fRecord.clear();
             }
-            mlist.clear();
-            dlog.fLastBlock.copy(*this);
-            if (glist.size() > 0) {
-               top.mlist.push_back("[[" + name);
-               top.mlist.insert(top.mlist.end(), mlist.begin(), mlist.end());
-               top.mlist.push_back("]]" + name);
-            }
-            dlog.fReading->seekg(top.gptr);
          }
-      }
-
-      void copy(const block &src) {
-         lineno = src.lineno;
-         beginline = src.beginline;
-         endline = src.endline;
-         gptr = src.gptr;
-         eptr = src.eptr;
-         glist = src.glist;
-         mlist = src.mlist;
-         prefix = src.prefix;
-         chan = src.chan;
-         name = src.name;
       }
       friend class dilog;
    };
 
-   static dilog &get(const std::string &channel) {
+   static dilog &get(const std::string &channel, bool threadsafe=true)
+   {
+    // This is the main factory method for dilog objects. Ownership of
+    // the object reference returned is retained by the dilog framework
+    // and returned to the user as a borrowed reference. Channel should
+    // be a unique name for this dilog channel, and becomes the filename
+    // of the dilog trace file <channel>.dilog that is read in response
+    // to subsequent printf calls on this channel, or written if the
+    // file does not exist at runtime.
+    //
+    // Normally a given dilog channel should only be accessed from within
+    // the same execution thread that created it. Sometimes this rule is
+    // violated by static object cleanup running in the main thread at
+    // program exit, or some other thread locking mechanism may be in
+    // place that prevents cross-thead access violations. In that case,
+    // invoke get with threadsafe=false to suppress these unwanted
+    // exceptions, and take care of verifying thread safety yourself.
+ 
       static std::mutex mutex;
       std::lock_guard<std::mutex> guard(mutex);
       dilogs_map_t &dilogs = get_map();
@@ -181,15 +222,26 @@ class dilog {
          dilogs[channel] = new dilog(channel);
          dilogs[channel]->fThread_id = tid;
       }
-      if (dilogs[channel]->fThread_id != tid) {
-         throw std::runtime_error("dilog::get error: "
-               "access to channel \"" + channel +
-               "\" attempted from more than one thread");
+      if (threadsafe && dilogs[channel]->fThread_id != tid) {
+         dilogs[channel]->fError = "dilog::get error: access to channel"
+                                   " \"" + channel + "\" attempted"
+                                   " from more than one thread";
+         throw std::runtime_error(dilogs[channel]->fError);
       }
       return *dilogs[channel];
    }
 
-   int printf(const char* fmt, ...) {
+   int printf(const char* fmt, ...)
+   {
+    // This is the primary user-callable method of dilog. Normally it
+    // is invoked on a temporary reference to a dilog object returned
+    // by get, eg. dilog::get(channel).printf(...). The arguments to 
+    // printf are identical to the stdio printf function. If called
+    // with a pending error in fError from a previous failed operation,
+    // throw the exception again.
+ 
+      if (fError.size() > 0)
+         throw std::runtime_error(fError);
       const unsigned int max_message_size(999);
       char msg[max_message_size + 1];
       va_list args;
@@ -197,25 +249,32 @@ class dilog {
       int bytes = vsnprintf(msg, max_message_size, fmt, args);
       va_end(args);
       block &top = *fBlocks.top();
-      std::string message = "[" + top.prefix + "]" + msg;
-      if (message.back() != '\n')
-         message += "\n";
+      char *eos = strchr(msg, '\n');
+      if (eos != NULL)
+         *eos = 0;
+      std::string message = "[" + top.prefix + "]" + msg + "\n";
       if (fWriting) {
          *fWriting << message;
-         ++top.lineno;
+         ++fLineno;
       }
-      else
+      else {
          check_message(msg);
+         if (fBlocks.size() > 1) {
+            fRecord.push_back("[]" + std::string(msg));
+         }
+      }
       return bytes;
    }
 
    int get_lineno() const {
-      return fBlocks.top()->lineno;
+      return fLineno;
    }
 
  protected:
    dilog() = delete;
-   dilog(const std::string& channel) {
+   dilog(const std::string& channel)
+    : fLineno(0), fChannel(channel)
+   {
       std::string fname(channel);
       fname += ".dilog";
       fReading = new std::ifstream(fname.c_str());
@@ -239,87 +298,180 @@ class dilog {
       delete fBlocks.top();
    }
 
-   void check_message(std::string message) {
-      int nl;
-      while ((nl = message.find('\n')) != message.npos)
-         message.erase(nl);
+   void check_message(const std::string message)
+   {
+    // Validate printf message against the next content found in the input
+    // file, and throw a runtime exception if the match fails.
+ 
+      size_t nl;
+      std::string msg(message);
+      while ((nl = msg.find('\n')) != msg.npos)
+         msg.erase(nl);
       block &top = *fBlocks.top();
-      std::string mexpected = "[" + top.prefix + "]" + message;
-      std::string nextmsg;
-      while (getline(*fReading, nextmsg, '\n')) {
-         ++top.lineno;
-         if (nextmsg.find(top.prefix) != 1)
+      std::streampos gptr = fReading->tellg();
+      std::string mexpected = "[" + top.prefix + "]" + msg;
+      for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
+         ++fLineno;
+         if (nextmsg.find(top.prefix) != 1) {
+std::cerr << "blank check for \"" << mexpected << "\" at line " << fLineno << std::endl;
+            gptr = fReading->tellg();
             continue;
+         }
          else if (nextmsg == mexpected) {
-            if (fBlocks.size() > 1)
-               top.mlist.push_back("[]" + message);
+std::cerr << "good check for \"" << mexpected << "\" at line " << fLineno << std::endl;
             return;
          }
-         else if (fBlocks.size() > 1) {
-            if (next_block())
-               continue;
+         else if (next_block(nextmsg)) {
+std::cerr << "next block for \"" << mexpected << "\" at line " << fLineno << std::endl;
+            continue;
          }
-         break;
+std::cerr << "failed check for \"" << mexpected << "\" at line " << fLineno << std::endl;
+         fError = "dilog::printf error: expected dilog message"
+                  " \"" + msg + "\" at line " + std::to_string(fLineno)
+                  + " in " + fChannel + ".dilog but found \"" 
+                  + nextmsg + "\" instead.";
+         throw std::runtime_error(fError);
       }
-      throw std::runtime_error("dilog::printf error: "
-            "expected dilog message \"" + message +
-            "\" at line " + std::to_string(top.lineno)
-            + " in " + top.chan + ".dilog");
+      fError = "dilog::printf error: read error from input file " +
+               fChannel + ".dilog after line " + std::to_string(fLineno);
+      throw std::runtime_error(fError);
    }
 
-   bool next_block() {
-      block &top = *fBlocks.top();
-      std::string mexpected = "]" + top.prefix + "]";
-      std::string nextmsg;
-      while (getline(*fReading, nextmsg, '\n')) {
-         ++top.lineno;
-         if (nextmsg == mexpected)
-            break;
-      }
-      top.glist[top.gptr] = top.beginline;
-      auto bnext = ++top.glist.find(top.gptr);
-      if (bnext != top.glist.end()) {
-         top.gptr = bnext->first;
-         top.lineno = bnext->second;
-         top.beginline = bnext->second;
-         fReading->seekg(top.gptr);
-      }
-      else {
-         top.gptr = fReading->tellg();
-         top.beginline = top.lineno;
-      }
-      mexpected = "[" + top.prefix + "[";
-      while (getline(*fReading, nextmsg, '\n')) {
-         ++top.lineno;
-         if (nextmsg.find(top.prefix) != 1)
-            continue;
-         else if (nextmsg != mexpected)
-            return false;
-         else
-            break;
-      }
-      try {
-         std::map<std::string, block*> blocks;
-         for (std::string msg : top.mlist) {
-            if (msg.substr(0,2) == "[[")
-               blocks[msg.substr(2)] = new block(top.chan, msg.substr(2));
-            else if (msg.substr(0,2) == "]]")
-               delete blocks[msg.substr(2)];
-            else
-               printf(msg.substr(2).c_str());
+   bool next_block(const std::string lastmsg)
+   {
+    // Entry here assumes that a mismatch has been found between the expected
+    // message (unknown to next_block) and lastmsg that was last read from the
+    // input file. The task of next_block is to search through all remaining
+    // block iterations to see if there might be another chance to fulfill the
+    // expectation. If the search is successful, it returns true with the input
+    // file and block hierarchy positioned to repeat the check. The search for
+    // the next candidate block is complicated by the arbitrary hierarchy of
+    // nested loops that the algorithm must deal with, including the fact that
+    // a match might be found in a different iteration of an outer block that
+    // contains the block where the mismatch occurred. This requires the full
+    // history of all messages starting with entry to the outermost loop be
+    // maintained for eventual replay in case of a failed match in an inner
+    // block. If the search fails to find any match among all iterations of
+    // the outermost block then it returns false.
+ 
+      while (fBlocks.size() > 1) {
+         block &top = *fBlocks.top();
+         auto &blinks = fBlinks[top.prefix];
+         blinks[top.base] = top.beginline;
+         std::string mexpected = "]" + top.prefix + "]";
+         if (lastmsg != mexpected) {
+std::cerr << "next_block advancing to end of block " << top.prefix << " from line " << fLineno << std::endl;
+            for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
+               ++fLineno;
+               if (nextmsg == mexpected)
+                  break;
+            }
          }
+std::cerr << "next_block advanced to end of block at line " << fLineno << std::endl;
+         auto blink = blinks.find(top.base);
+         if (++blink != blinks.end()) {
+            fReading->seekg(blink->first);
+            fLineno = blink->second;
+         }
+         top.base = fReading->tellg();
+         top.beginline = fLineno;
+std::cerr << "next_block looking for new block iteration at line " << fLineno << std::endl;
+         mexpected = "[" + top.prefix + "[";
+         for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
+            ++fLineno;
+            if (nextmsg == mexpected)
+               break;
+            fReading->seekg(top.base);
+            fLineno = top.beginline;
+            if (fBlocks.top() == fBreplay.top()) {
+               delete fBlocks.top();
+               fBreplay.pop();
+            }
+            else {
+               fBlanks.push(fBlocks.top());
+            }
+            fBlocks.pop();
+            return next_block(nextmsg);
+         }
+std::cerr << "next_block found new block iteration, continuing at line " << fLineno << std::endl;
+         std::string prefix = top.prefix;
+         for (unsigned int ireplay = top.ireplay; ireplay < fRecord.size(); ++ireplay) {
+std::cerr << "next_block replay at position " << ireplay << ": " << fRecord[ireplay] << std::endl;
+            std::string mexpected = fRecord[ireplay];
+            int dir;
+            if (mexpected.find("[[") == 0) {
+               dir = 1;
+               prefix = mexpected.substr(2);
+               mexpected = "[" + prefix + "[";
+            }
+            else if (mexpected.find("]]") == 0) {
+               dir = -1;
+               prefix = mexpected.substr(2);
+               mexpected = "]" + prefix + "]";
+            }
+            else {
+               dir = 0;
+               mexpected = "[" + prefix + "]" + mexpected.substr(2);
+            }
+            for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
+               ++fLineno;
+               if (nextmsg.find(prefix) != 1)
+                  continue;
+               else if (nextmsg != mexpected)
+                  return next_block(nextmsg);
+               if (dir == 1) {
+                  if (fBlanks.top()->prefix == prefix && 
+                      fBlanks.top()->ireplay == ireplay+1)
+                  {
+                     fBlanks.top()->base = fReading->tellg();
+                     fBlanks.top()->beginline = fLineno;
+                     fBlocks.push(fBlanks.top());
+                     fBlanks.pop();
+                  }
+                  else {
+                     size_t pos = prefix.find_last_of("/") + 1;
+                     block *bnew = new block(fChannel, prefix.substr(pos));
+                     bnew->ireplay = ireplay + 1;
+                     fBreplay.push(bnew);
+                     fBlocks.push(bnew);
+                  }
+               }
+               else if (dir == -1) {
+                  assert (fBlocks.top() == fBreplay.top());
+                  delete fBreplay.top();
+                  fBreplay.pop();
+                  fBlocks.pop();
+                  prefix = fBlocks.top()->prefix;
+               }
+               break;
+            }
+         }
+         assert (fBreplay.size() == 0);
+         assert (fBlanks.size() == 0);
          return true;
       }
-      catch (std::exception e) {
-         return false;
-      }
+      return false;
    }
 
-   std::ifstream *fReading;
-   std::ofstream *fWriting;
-   std::stack<block*> fBlocks;
-   block fLastBlock;
-   std::thread::id fThread_id;
+   unsigned int fLineno;                   // current line number in dilog file
+   std::string fChannel;                   // name of this channel
+   std::ifstream *fReading;                // non-zero if reading
+   std::ofstream *fWriting;                // non-zero if writing
+   std::stack<block*> fBlocks;             // current stack of search block iterations
+   std::stack<block*> fBlanks;             // user blocks rolled back during replay
+   std::stack<block*> fBreplay;            // temporary blocks created during replay
+   std::vector<std::string> fRecord;       // record of block actions for replay
+   std::thread::id fThread_id;             // thread where this channel was created
+   std::string fError;                     // pending exception message on this channel
+
+   // fBlinks contains information about all of the unmatched iterations
+   // of known blocks that have been encountered so far in the input file.
+   // The links are indexed by the block prefix, and consists of key-value
+   // pairs where the key is the file offset in the input file where the
+   // unmatched iteration begins, and the value is the corresponding line
+   // number. Entries in fBlinks[channel] are inserted by next_block and
+   // erased up by ~block upon completion of a successful block match.
+   std::map<std::string, std::map<std::streampos, int> > fBlinks;
 
  private:
    class dilogs_holder {
@@ -336,7 +488,7 @@ class dilog {
    };
 
    static dilogs_map_t& get_map() {
-       static dilogs_holder holder;
-       return holder.fDilogs;
+      static dilogs_holder holder;
+      return holder.fDilogs;
    }
 };
