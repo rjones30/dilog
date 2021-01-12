@@ -117,6 +117,9 @@ class dilog {
                   ireplay = dlog.fRecord.size();
                   return;
                }
+std::cerr << "debug #1: current top block is:" << top.prefix << std::endl;
+std::cerr << "  failed to descend into new block " << prefix << std::endl;
+kill(0,6);
                dlog.fError = "dilog::block::block error: "
                              "expected new execution block"
                              " \"" + prefix + "\" at line "
@@ -401,23 +404,31 @@ class dilog {
                dir = 0;
                mexpected = "[" + prefix + "]" + mexpected.substr(2);
             }
+            std::streampos base = fReading->tellg();
+            unsigned int beginline = fLineno;
             for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
                ++fLineno;
-               if (nextmsg.find(prefix) != 1)
+               if (nextmsg.find(prefix) != 1) {
+                  base = fReading->tellg();
+                  beginline = fLineno;
                   continue;
-               else if (nextmsg != mexpected)
+               }
+               else if (nextmsg != mexpected) {
                   return next_block(nextmsg);
-               if (dir == 1) {
+               }
+               else if (dir == 1) {
                   if (fBlanks.size() > 0 &&
                       fBlanks.top()->prefix == prefix && 
                       fBlanks.top()->ireplay == ireplay+1)
                   {
-                     fBlanks.top()->base = fReading->tellg();
-                     fBlanks.top()->beginline = fLineno;
+                     fBlanks.top()->base = base;
+                     fBlanks.top()->beginline = beginline;
                      fBlocks.push(fBlanks.top());
                      fBlanks.pop();
                   }
                   else {
+                     fLineno = beginline;
+                     fReading->seekg(base);
                      size_t pos = prefix.find_last_of("/") + 1;
                      block *bnew = new block(fChannel, prefix.substr(pos));
                      bnew->ireplay = ireplay + 1;
@@ -428,6 +439,8 @@ class dilog {
                else if (dir == -1) {
                   assert (fBreplay.size() > 0);
                   assert (fBreplay.top() == fBlocks.top());
+                  fLineno = beginline;
+                  fReading->seekg(base);
                   delete fBreplay.top();
                   fBreplay.pop();
                   fBlocks.pop();
