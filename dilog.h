@@ -81,8 +81,8 @@ class dilog {
 
     public:
       block(const std::string &channel, const std::string &blockname,
-                                        bool threadsafe=true)
-       : chan(channel), name(blockname), base(0), beginline(0), ireplay(0)
+                                        bool threadsafe=true, int replay=0)
+       : chan(channel), name(blockname), base(0), beginline(0), ireplay(replay)
       {
        // Initialize a new iteration of block with name blockname on dilog
        // object named channel, generating a new dilog object if it does
@@ -107,21 +107,29 @@ class dilog {
             std::string mexpected = "[" + prefix + "[";
             for (std::string nextmsg; std::getline(*dlog.fReading, nextmsg);) {
                ++dlog.fLineno;
-               if (nextmsg.find(prefix) != 1) {
-                  base = dlog.fReading->tellg();
-                  beginline = dlog.fLineno;
-                  continue;
-               }
-               else if (nextmsg == mexpected) {
-                  dlog.fRecord.push_back("[[" + prefix);
-                  ireplay = dlog.fRecord.size();
+               if (nextmsg == mexpected) {
+                  if (replay == 0) {
+                     // std::cerr << "block::block records match step " 
+                     //           << dlog.fRecord.size() << " at lineno "
+                     //           << dlog.fLineno << ": [[" << prefix
+                     //           << std::endl;
+                     dlog.fMatched[dlog.fRecord.size()] = dlog.fLineno;
+                     dlog.fRecord.push_back("[[" + prefix);
+                     ireplay = dlog.fRecord.size();
+                  }
+                  else {
+                     // std::cerr << "block::block replays match step "
+                     //           << ireplay << " at lineno " 
+                     //           << dlog.fLineno << ": [[" << prefix
+                     //           << std::endl;
+                  }
                   return;
                }
                dlog.fError = "dilog::block::block error: "
                              "expected new execution block"
                              " \"" + prefix + "\" at line "
                              + std::to_string(dlog.fLineno)
-                             + " in " + channel + ".dilog" + "\n"
+                             + " in " + channel + ".dilog "
                              "but found \"" + nextmsg + "\" instead.";
                throw std::runtime_error(dlog.fError);
             }
@@ -157,9 +165,7 @@ class dilog {
             for (std::string nextmsg; std::getline(*dlog.fReading, nextmsg);) {
                ++dlog.fLineno;
                unsigned int lineno = dlog.fLineno;
-               if (nextmsg.find(prefix) != 1)
-                  continue;
-               else if (nextmsg == mexpected)
+               if (nextmsg == mexpected)
                   break;
                else if (dlog.next_block(nextmsg))
                   continue;
@@ -172,6 +178,28 @@ class dilog {
                std::cerr << DILOG_LOGO << DILOG_LOGO << std::endl;
                std::cerr << dlog.fError << std::endl;
                //throw std::runtime_error(dlog.fError); !! Not from destructor !!
+               return;
+            }
+            if (dlog.fBreplay.size() > 0 && dlog.fBreplay.top()->prefix == prefix) {
+               // std::cerr << "block::~block replays match step " 
+               //           << dlog.fRecord.size() << " at lineno "
+               //           << dlog.fLineno << ": ]]" + prefix
+               //           << std::endl;
+            }
+            else if (dlog.fBlocks.size() > 2) {
+               // std::cerr << "block::~block records match step "
+               //           << dlog.fRecord.size() << " at lineno "
+               //           << dlog.fLineno << ": ]]" + prefix
+               //           << std::endl;
+               dlog.fMatched[dlog.fRecord.size()] = dlog.fLineno;
+               dlog.fRecord.push_back("]]" + prefix);
+            }
+            else {
+               // std::cerr << "block::~block clears replay record at lineno "
+               //           << dlog.fLineno << ": ]]" + prefix
+               //           << std::endl;
+               dlog.fMatched.clear();
+               dlog.fRecord.clear();
             }
             auto &blinks = dlog.fBlinks[prefix];
             blinks.erase(base);
@@ -183,12 +211,6 @@ class dilog {
                dlog.fReading->seekg(blinks.begin()->first);
                dlog.fLineno = blinks.begin()->second;
                blinks.erase(blinks.begin());
-            }
-            if (dlog.fBlocks.size() > 2) {
-               dlog.fRecord.push_back("]]" + prefix);
-            }
-            else {
-               dlog.fRecord.clear();
             }
          }
          dlog.fBlocks.pop();
@@ -260,6 +282,11 @@ class dilog {
       else {
          check_message(msg);
          if (fBlocks.size() > 1) {
+            // std::cerr << "printf records match step " 
+            //           << fRecord.size() << " at lineno "
+            //           << fLineno << ": []" << msg
+            //           << std::endl;
+            fMatched[fRecord.size()] = fLineno;
             fRecord.push_back("[]" + std::string(msg));
          }
       }
@@ -308,21 +335,15 @@ class dilog {
       while ((nl = msg.find('\n')) != msg.npos)
          msg.erase(nl);
       block &top = *fBlocks.top();
-      std::streampos gptr = fReading->tellg();
       std::string mexpected = "[" + top.prefix + "]" + msg;
       for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
          ++fLineno;
-         unsigned int lineno = fLineno;
-         if (nextmsg.find(top.prefix) != 1) {
-            gptr = fReading->tellg();
-            continue;
-         }
-         else if (nextmsg == mexpected)
+         if (nextmsg == mexpected)
             return;
          else if (next_block(nextmsg))
             continue;
          fError = "dilog::printf error: expected dilog message"
-                  " \"" + msg + "\" at line " + std::to_string(lineno)
+                  " \"" + msg + "\" at line " + std::to_string(fLineno)
                   + " in " + fChannel + ".dilog but found \"" 
                   + nextmsg + "\" instead.";
          throw std::runtime_error(fError);
@@ -357,8 +378,11 @@ class dilog {
          if (lastmsg != mexpected) {
             for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
                ++fLineno;
-               if (nextmsg == mexpected)
+               if (nextmsg == mexpected) {
+                  // std::cerr << "next_block rewinds to match step "
+                  //           << top.ireplay-1 << std::endl;
                   break;
+               }
             }
          }
          auto blink = blinks.find(top.base);
@@ -372,10 +396,15 @@ class dilog {
          for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
             ++fLineno;
             if (nextmsg == mexpected) {
+               fMatched[top.ireplay-1] = fLineno;
+               // std::cerr << "next_block replays match step " 
+               //           << top.ireplay-1 << "/" << fRecord.size()
+               //           << " at lineno " << fLineno << ": "
+               //           << mexpected << std::endl;
                break;
             }
             else if (fBreplay.size() > 0 && fBreplay.top() == fBlocks.top()) {
-               top.chan = ""; // suppress search for termination in block destructor
+               top.chan = ""; // suppress search for termination in block dtor
                delete fBlocks.top();
                fBreplay.pop();
             }
@@ -408,12 +437,7 @@ class dilog {
             unsigned int beginline = fLineno;
             for (std::string nextmsg; std::getline(*fReading, nextmsg);) {
                ++fLineno;
-               if (nextmsg.find(prefix) != 1) {
-                  base = fReading->tellg();
-                  beginline = fLineno;
-                  continue;
-               }
-               else if (nextmsg != mexpected) {
+               if (nextmsg != mexpected) {
                   return next_block(nextmsg);
                }
                else if (dir == 1) {
@@ -430,7 +454,7 @@ class dilog {
                      fLineno = beginline;
                      fReading->seekg(base);
                      size_t pos = prefix.find_last_of("/") + 1;
-                     block *bnew = new block(fChannel, prefix.substr(pos));
+                     block *bnew = new block(fChannel, prefix.substr(pos), ireplay);
                      bnew->ireplay = ireplay + 1;
                      fBreplay.push(bnew);
                      fBlocks.push(bnew);
@@ -446,6 +470,11 @@ class dilog {
                   fBlocks.pop();
                   prefix = fBlocks.top()->prefix;
                }
+               // std::cerr << "next_block replays match step "
+               //           << ireplay << "/" << fRecord.size()
+               //           << " at lineno " << fLineno << ": "
+               //           << mexpected << std::endl;
+               fMatched[ireplay] = fLineno;
                break;
             }
          }
@@ -456,16 +485,16 @@ class dilog {
       std::string prefix = fBlocks.top()->prefix;
       std::cerr << DILOG_LOGO << DILOG_LOGO << std::endl;
       std::cerr << "Fatal error in dilog::next_block - "
-                << "no more iterations of block " << prefix
-                << " to search, giving up at line " << fLineno << std::endl
+                << "no more iterations to search, "
+                << "giving up at line " << fLineno << std::endl
                 << "because none of the remaining unmatched "
                 << "iterations matches the loop context:" << std::endl;
       int level=1;
-      for (unsigned int i=0; i < fRecord.size(); ++i) {
+      for (unsigned int ireplay=0; ireplay < fRecord.size(); ++ireplay) {
          for (int j=1; j < level; ++j)
             std::cerr << "  ";
-         if (fRecord[i].find("[[") == 0) {
-            std::string prefix = fRecord[i].substr(2);
+         if (fRecord[ireplay].find("[[") == 0) {
+            std::string prefix = fRecord[ireplay].substr(2);
             std::string unmatched;
             int lineno = 0;
             for (auto biter : fBlinks[prefix]) {
@@ -475,17 +504,40 @@ class dilog {
                   unmatched = std::to_string(lineno);
                lineno = biter.second + 1;
             }
-            std::cerr << "  " << prefix << "[["
-                      << " (unmatched at line " << unmatched << ")"
-                      << std::endl;
-            ++level;
+            if (fMatched.find(ireplay) != fMatched.end()) {
+               std::cerr << "  " << prefix << "[["
+                         << " (last matched at line " << fMatched[ireplay] << ")"
+                         << std::endl;
+            }
+            else {
+               std::cerr << "  " << prefix << "[["
+                         << " (unmatched at line " << unmatched << ")"
+                         << std::endl;
+               ++level;
+            }
          }
-         else if (fRecord[i].find("]]") == 0) {
-            std::cerr << fRecord[i] << std::endl;
+         else if (fRecord[ireplay].find("]]") == 0) {
+            if (fMatched.find(ireplay) != fMatched.end()) {
+               std::cerr << "  " << fRecord[ireplay]
+                         << " (last matched at line " << fMatched[ireplay] << ")"
+                         << std::endl;
+            }
+            else {
+               std::cerr << fRecord[ireplay] << " (unmatched)" << std::endl;
+            }
             --level;
          }
          else {
-            std::cerr << "  " << fRecord[i].substr(2) << std::endl;
+            if (fMatched.find(ireplay) != fMatched.end()) {
+               std::cerr << "  " << fRecord[ireplay].substr(2)
+                         << " (last matched at line " << fMatched[ireplay] << ")"
+                         << std::endl;
+            }
+            else {
+               std::cerr << "  " << fRecord[ireplay].substr(2) 
+                         << " (unmatched)"
+                         << std::endl;
+            }
          }
       }
       return false;
@@ -510,6 +562,11 @@ class dilog {
    // number. Entries in fBlinks[channel] are inserted by next_block and
    // erased up by ~block upon completion of a successful block match.
    std::map<std::string, std::map<std::streampos, int> > fBlinks;
+
+   // fMatched is a record of the line numbers in the input file that
+   // matched the lines of the fRecord replay vector, keyed by index
+   // into the fRecord vector.
+   std::map<unsigned int, unsigned int> fMatched;
 
  private:
    class dilogs_holder {
