@@ -117,9 +117,6 @@ class dilog {
                   ireplay = dlog.fRecord.size();
                   return;
                }
-std::cerr << "debug #1: current top block is:" << top.prefix << std::endl;
-std::cerr << "  failed to descend into new block " << prefix << std::endl;
-kill(0,6);
                dlog.fError = "dilog::block::block error: "
                              "expected new execution block"
                              " \"" + prefix + "\" at line "
