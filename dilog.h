@@ -375,12 +375,15 @@ class dilog {
                break;
             }
             else if (fBreplay.size() > 0 && fBreplay.top() == fBlocks.top()) {
+               top.chan = ""; // suppress search for termination in block destructor
                delete fBlocks.top();
                fBreplay.pop();
             }
             else
                fBlanks.push(fBlocks.top());
             fBlocks.pop();
+            fLineno = top.beginline;
+            fReading->seekg(top.base);
             return next_block(nextmsg);
          }
          std::string prefix = top.prefix;
