@@ -5,7 +5,7 @@ that should produce identical results each time it runs, but does not.
 ## Description
 A standard expectation of data processing applications is that repeated runs with the same input data, using
 the same hardware and the same binaries, should produce the same output. Surprisingly, in complex applications
-this a frequently not the case, and making sure that that it does provides a useful constraint on the correctness
+this is frequently not the case, and making sure that that it does provides a useful constraint on the correctness
 of the algorithm. Divergence happens for a variety of reasons. If the code is multi-threaded, there might be a
 race condition between the threads that accounts for the difference. If there is just a single processing thread,
 the reason might be related to differences in the addresses that are assigned to objects allocated on the heap,
