@@ -85,7 +85,8 @@ to find that none of the iterations recorded in the input dilog file contain a m
 message it has received. In that case, a better strategy might be to assign a unique channel name
 for each iteration of the loop, eg. `dilog.get("myiter_i").printf("message")`, instead of enclosing
 them all inside a block. This segmentation strategy will result in separate files `myiter_`i`.dilog`
-being written in the cwd, with a different i for each iteration of the loop. Then the dilog input
+being written in the cwd, with a different i for each iteration of the loop that you assign to 
+identify this iteration instance independent of processing order. Then the dilog input
 scanner will have a unique input file to check against each iteration of the loop, and so it will
 run with very little cpu overhead, at the cost of having many small dilog output files written to
 the cwd instead of one larger one.
