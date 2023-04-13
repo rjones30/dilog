@@ -44,7 +44,8 @@ the first time it ran. A runtime exception will be generated as soon as a diverg
 
 ## Execution blocks
 The main problem to be overcome in the implementation of dilog is to avoid false reports of divergence
-coming from reordering of loops and arbitrary ordering threads execution. To help dilog recognize
+coming from reordering of loops and arbitrary reordering of object processing in a multithreaded
+dispatch context. To help dilog recognize
 and eliminate these false positives, the user must insert special markers into the dilog message stream
 using the `dilog::block` constructor and destructor. Each block must be assigned to a dilog stream and
 be given a unique name so that it can be distinguished from other blocks. A block of a given name begins
