@@ -38,7 +38,7 @@ exit.
     ...
 
 Rebuild and run your application. After the first time, you will see a new output file sheepcounter.dilog
-in your cwd. Run your application from the same data a second time and the data in myapp.dilog will be
+in your cwd. Run your application from the same data a second time and the data in sheepcounter.dilog will be
 used to check the execution for any divergences in the dilog message sequence that occur relative to
 the first time it ran. A runtime exception will be generated as soon as a divergence is detected.
 
