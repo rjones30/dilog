@@ -104,11 +104,12 @@ bypass the one-to-one restriction between dilog channels and threads, eg. if a s
 used to destroy all static objects at program exit, you can invoke dilog::get method and the
 dilog::block constructor with optional argument threadsafe=false.
 
-If the thread organization of your application assigns unique tasks to each thread then the dilog
-channel for that thread's messages and blocks should be assigned a unique name that indicates the
-specific task. If a symmetric multithreading model is used, a unique dilog channel name should be
-used for each chunk of work assigned to a worker thread, with the name updating regularly as
-the work progresses. This would be an example of the segmentation strategy that was described above.
+If the thread organization of your application assigns unique tasks or objects to be processed
+to each thread then the dilog channel for that thread's messages and blocks should be assigned a
+unique name that indicates the specific task or object, eg. an input record number. If a symmetric
+multithreading model is used, a unique dilog channel name should be used for each chunk of work
+assigned to a worker thread, with the name updating regularly as the work progresses. This would
+be an example of the segmentation strategy that was described above.
 It has the advantage that dilog verification of a clean application will succeed even if the 
 number of worker threads changes from one run to the next, or even if it changes in a
 non-deterministic way during execution.
