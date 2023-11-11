@@ -921,10 +921,9 @@ class dilog {
       dilogs_map_t fDilogs;
       dilogs_holder() {}
       ~dilogs_holder() {
-         dilogs_map_t &dilogs = get_map();
+         dilogs_map_t dilogs = get_map();
          for (auto iter : dilogs) {
             delete iter.second;
-            dilogs.erase(iter.first);
          }
       }
    };
