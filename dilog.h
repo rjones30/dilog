@@ -43,6 +43,9 @@
 
 #define DILOG_LOGO "---DILOG------DILOG------DILOG---"
 
+#ifndef DILOG_HEADER_INCLUDED_
+#define DILOG_HEADER_INCLUDED_ 1
+
 class dilog;
 using dilogs_map_t = std::map<std::string, dilog*>;
 
@@ -933,3 +936,5 @@ class dilog {
       return holder.fDilogs;
    }
 };
+
+#endif
