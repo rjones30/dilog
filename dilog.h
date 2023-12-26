@@ -776,7 +776,7 @@ class dilog {
                    << fError << std::endl;
          clean_exit("dilog::printf");
       }
-      const unsigned int max_message_size(999);
+      const unsigned int max_message_size(999999999);
       char msg[max_message_size + 1];
       va_list args;
       va_start(args, fmt);
