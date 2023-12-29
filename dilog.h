@@ -26,11 +26,11 @@
 //     ...
 
 #include <stdio.h>
-#include <stdarg.h>
 #include <signal.h>
 #include <string.h>
 #include <assert.h>
 
+#include <cstdarg>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -776,9 +776,9 @@ class dilog {
                    << fError << std::endl;
          clean_exit("dilog::printf");
       }
-      const unsigned int max_message_size(9999999);
-      char msg[max_message_size + 1];
-      va_list args;
+      const unsigned int max_message_size(99999999);
+      char *msg = new char[max_message_size];
+      std::va_list args;
       va_start(args, fmt);
       int bytes = vsnprintf(msg, max_message_size, fmt, args);
       va_end(args);
@@ -809,6 +809,7 @@ class dilog {
             logger("[" + fBlock->getPath() + "]" + msg);
          }
       }
+      delete msg;
       return bytes;
    }
 
